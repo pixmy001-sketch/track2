@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LMS Video Tracker (Live Sync)</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+        body { background-color: #f0f2f5; font-family: 'Segoe UI', sans-serif; }
+        .login-container { max-width: 400px; margin: 80px auto; background: white; padding: 40px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        .dashboard-container { display: none; padding: 20px; max-width: 1400px; margin: 0 auto; }
+        .video-card { background: white; border-radius: 12px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; border: 1px solid #e1e4e8; }
+        
+        /* Playlist Styles */
+        .playlist-container { max-height: 600px; overflow-y: auto; }
+        .playlist-item { display: flex; align-items: center; padding: 10px; border-radius: 8px; margin-bottom: 8px; cursor: pointer; transition: all 0.2s; border: 1px solid transparent; }
+        .playlist-item:hover { background-color: #f8f9fa; border-color: #e9ecef; }
+        .playlist-item.active { background-color: #e3f2fd; border-color: #90caf9; }
+        .playlist-item.locked { opacity: 0.6; cursor: not-allowed; background-color: #f8f9fa; }
+        .playlist-thumbnail { width: 80px; height: 45px; object-fit: cover; border-radius: 4px; margin-right: 12px; background-color: #000; }
+        .playlist-info h6 { margin: 0; font-size: 0.95rem; font-weight: 600; color: #2c3e50; }
+        
+        /* Log Box */
+        .log-box { background: white; padding: 0; border-radius: 8px; height: 300px; overflow-y: auto; border: 1px solid #e1e4e8; }
+        .log-entry { padding: 10px 15px; border-bottom: 1px solid #f1f1f1; font-size: 0.85rem; display: flex; align-items: flex-start; }
+        .log-time { color: #6c757d; font-size: 0.75rem; min-width: 70px; margin-right: 10px; }
+        .log-content { flex: 1; }
+
+        /* Progress Bar */
+        .progress-container { height: 12px; background: #e9ecef; border-radius: 6px; margin-top: 15px; overflow: hidden; }
+        .progress-bar-custom { height: 100%; background: linear-gradient(90deg, #3498db, #2980b9); width: 0%; transition: width 0.3s; }
+        
+        #loadingOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.9); z-index: 9999;
+            display: flex; justify-content: center; align-items: center;
+            flex-direction: column;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay">
+        <div class="spinner-border text-primary" role="status"></div>
+        <div class="mt-2 fw-bold">Connecting to Cloud Database...</div>
+    </div>
+
+    <!-- 1. Login Page -->
+    <div id="loginSection" class="container" style="display:none;">
+        <div class="login-container">
+            <div class="text-center mb-4">
+                <i class="fas fa-cloud text-primary fa-3x mb-2"></i>
+                <h3>LMS Cloud Portal</h3>
+                <p class="text-muted">Real-time Sync Enabled</p>
+            </div>
+            <div class="mb-3">
+                <label class="form-label fw-bold">Username</label>
+                <input type="text" id="usernameInput" class="form-control" placeholder="e.g. username1">
+            </div>
+            <div class="mb-4">
+                <label class="form-label fw-bold">Password</label>
+                <input type="password" id="passwordInput" class="form-control" placeholder="••••••••">
+            </div>
+            <button onclick="handleLogin()" class="btn btn-primary w-100 py-2 fw-bold">Login</button>
+            <p class="text-danger mt-3 text-center small fw-bold" id="loginError"></p>
+        </div>
+    </div>
+
+    <!-- 2. User Dashboard -->
+    <div id="userSection" class="dashboard-container">
+        <nav class="navbar navbar-expand-lg navbar-light bg-white rounded shadow-sm mb-4 px-3">
+            <div class="d-flex align-items-center">
+                <i class="fas fa-graduation-cap text-primary fs-3 me-2"></i>
+                <span class="navbar-brand mb-0 h1">Student Dashboard</span>
+            </div>
+            <div class="ms-auto d-flex align-items-center gap-3">
+                <span class="fw-bold d-none d-md-block" id="displayUsername">User</span>
+                <button onclick="handleLogout()" class="btn btn-outline-danger btn-sm">Logout</button>
+            </div>
+        </nav>
+
+        <div class="row">
+            <div class="col-lg-8">
+                <div class="video-card">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 class="mb-0" id="currentVideoTitle">Loading Video...</h5>
+                        <span id="videoStatus" class="badge bg-secondary">Not Started</span>
+                    </div>
+                    <div id="playerContainer" class="ratio ratio-16x9 mb-3 bg-dark rounded overflow-hidden">
+                        <div id="player"></div>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center text-muted small mb-1">
+                        <span>Time Watched</span>
+                        <span><span id="timeWatched">0</span>s / <span id="totalDuration">0</span>s</span>
+                    </div>
+                    <div class="progress-container">
+                        <div id="progressBar" class="progress-bar-custom"></div>
+                    </div>
+                    <div id="skipAlert" class="alert alert-danger mt-3 d-none align-items-center shadow-sm">
+                        <i class="fas fa-exclamation-circle fs-4 me-3"></i>
+                        <div><strong>Skipping Detected!</strong> This incident has been logged.</div>
+                    </div>
+                </div>
+                <div class="video-card">
+                    <h6 class="mb-3">Activity Log</h6>
+                    <div id="activityLogBox" class="log-box"></div>
+                </div>
+            </div>
+            <div class="col-lg-4">
+                <div class="video-card playlist-container">
+                    <h6 class="mb-3 border-bottom pb-2">Cloud Playlist</h6>
+                    <div id="playlistGroup"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Admin Dashboard -->
+    <div id="adminSection" class="dashboard-container">
+        <nav class="navbar navbar-dark bg-dark rounded shadow-sm mb-4 px-3">
+            <span class="navbar-brand mb-0 h1">Admin Control Panel (Live)</span>
+            <button onclick="handleLogout()" class="btn btn-outline-light btn-sm">Logout</button>
+        </nav>
+
+        <div class="row mb-4">
+            <div class="col-md-5">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-primary text-white"><h6>Add Video to Cloud</h6></div>
+                    <div class="card-body">
+                        <input type="text" id="newVideoTitle" class="form-control mb-2" placeholder="Video Title">
+                        <input type="text" id="newVideoUrl" class="form-control mb-2" placeholder="YouTube URL">
+                        <button onclick="addNewVideo()" class="btn btn-primary w-100">Add to Playlist</button>
+                    </div>
+                </div>
+            </div>
+             <div class="col-md-7">
+                <div class="card shadow-sm h-100">
+                    <div class="card-header bg-white d-flex justify-content-between">
+                         <h6 class="mb-0">Live Playlist</h6>
+                         <small id="videoCountDisplay">0 Videos</small>
+                    </div>
+                    <div class="card-body p-0" style="max-height: 300px; overflow-y: auto;">
+                        <ul class="list-group list-group-flush" id="adminVideoList"></ul>
+                    </div>
+                </div>
+             </div>
+        </div>
+
+        <div class="card shadow-sm">
+            <div class="card-header bg-white d-flex justify-content-between align-items-center">
+                <h5 class="mb-0">Live Student Progress</h5>
+                <button onclick="downloadAllData()" class="btn btn-success btn-sm">Download Report</button>
+            </div>
+            <div class="card-body table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Student</th>
+                            <th>Status</th>
+                            <th>Progress</th>
+                            <th>Skips</th>
+                            <th>Log</th>
+                        </tr>
+                    </thead>
+                    <tbody id="adminTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // 1. Firebase Config
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // Global State
+        let currentUser = null;
+        let activeVideos = [];
+        let allUsersData = {};
+        
+        // Define Default Videos if DB is empty
+        const defaultVideos = [
+            { id: 'cI5uqE37gY0', title: 'Lesson 1: Introduction' }, 
+            { id: '18Lphrmpsj8', title: 'Lesson 2: Core Concepts' }
+        ];
+
+        // 2. Auth & Initialization
+        const initAuth = async () => {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Auth Failed", error);
+            }
+        };
+
+        initAuth();
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                document.getElementById('loadingOverlay').style.display = 'none';
+                document.getElementById('loginSection').style.display = 'block';
+                setupRealtimeListeners();
+            }
+        });
+
+        // 3. Real-time Listeners (The Magic Part)
+        function setupRealtimeListeners() {
+            // A. Listen to Playlist Changes (Admin Updates -> Everyone Sees)
+            const playlistRef = doc(db, 'artifacts', appId, 'public', 'data', 'lms_playlist');
+            
+            onSnapshot(playlistRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    activeVideos = docSnap.data().videos || [];
+                } else {
+                    // Initialize if empty
+                    activeVideos = defaultVideos;
+                    setDoc(playlistRef, { videos: defaultVideos });
+                }
+                
+                // Refresh UI if logged in
+                if (currentUser) {
+                    if (currentUser.role === 'admin') renderAdminVideoList();
+                    if (currentUser.role === 'user') loadPlaylistUI();
+                }
+            });
+
+            // B. Listen to User Progress (User Updates -> Admin Sees)
+            const usersColRef = collection(db, 'artifacts', appId, 'public', 'data', 'lms_users');
+            onSnapshot(usersColRef, (snapshot) => {
+                allUsersData = {};
+                snapshot.forEach(doc => {
+                    allUsersData[doc.id] = doc.data();
+                });
+                
+                // Refresh Admin Table if logged in as Admin
+                if (currentUser && currentUser.role === 'admin') {
+                    renderAdminUserTable();
+                }
+            });
+        }
+
+        // 4. Helper Functions for DB
+        window.saveUserProgress = async (username, data) => {
+            if (!username) return;
+            const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'lms_users', username);
+            await setDoc(userRef, data, { merge: true });
+        };
+        
+        window.updatePlaylist = async (newVideoList) => {
+            const playlistRef = doc(db, 'artifacts', appId, 'public', 'data', 'lms_playlist');
+            await setDoc(playlistRef, { videos: newVideoList });
+        };
+
+        // --- Expose Data to Global Scope for Standard JS Logic ---
+        window.activeVideos = activeVideos;
+        window.allUsersData = allUsersData;
+    </script>
+
+    <!-- Standard Logic -->
+    <script>
+        // Access global variables managed by Module
+        // We use a timer to ensure data is synced
+        
+        // Hardcoded Credentials
+        const users = [];
+        for (let i = 1; i <= 50; i++) users.push({ username: `username${i}`, password: `password${i}`, role: 'user' });
+        for (let i = 1; i <= 5; i++) users.push({ username: `admin${i}`, password: `adminpass${i}`, role: 'admin' });
+
+        let currentAppUser = null;
+        let player;
+        let timerInterval;
+        let currentVideoIndex = 0;
+        
+        // --- AUTH ---
+        function handleLogin() {
+            const userIn = document.getElementById('usernameInput').value.trim();
+            const passIn = document.getElementById('passwordInput').value.trim();
+            const user = users.find(u => u.username === userIn && u.password === passIn);
+
+            if (user) {
+                currentAppUser = user;
+                document.getElementById('loginSection').style.display = 'none';
+                
+                if (user.role === 'admin') {
+                    initAdminDashboard();
+                } else {
+                    // Log Login time
+                    window.saveUserProgress(user.username, { lastLogin: new Date().toLocaleString() });
+                    initUserDashboard();
+                }
+            } else {
+                document.getElementById('loginError').innerText = 'Invalid Credentials';
+            }
+        }
+
+        function handleLogout() {
+            if (player && typeof player.stopVideo === 'function') player.stopVideo();
+            currentAppUser = null;
+            document.querySelectorAll('.dashboard-container').forEach(d => d.style.display = 'none');
+            document.getElementById('loginSection').style.display = 'block';
+        }
+
+        // --- ADMIN LOGIC ---
+        function initAdminDashboard() {
+            document.getElementById('adminSection').style.display = 'block';
+            renderAdminVideoList();
+            renderAdminUserTable();
+        }
+
+        function renderAdminVideoList() {
+            const list = document.getElementById('adminVideoList');
+            // Access module-level variable via window if attached, 
+            // but here we wait for the module to update window.activeVideos or we access activeVideos from the Closure if we merge.
+            // Since module scope is separate, we rely on the Module updating the UI directly or using a bridge.
+            // *FIX*: In this structure, the Module handles the data fetch. 
+            // We will trigger a re-render from the Module.
+            
+            // For simplicity in this file format, the Module script above calls this function directly.
+            // So we just need to access the data. Since we can't easily share variables from Module to Script,
+            // We'll read from window.activeVideos which we assigned in the module.
+            
+            const vids = window.activeVideos || [];
+            document.getElementById('videoCountDisplay').innerText = `${vids.length} Videos`;
+            list.innerHTML = '';
+            
+            vids.forEach((v, index) => {
+                const li = document.createElement('li');
+                li.className = 'list-group-item d-flex justify-content-between align-items-center';
+                li.innerHTML = `
+                    <div class="d-flex align-items-center">
+                        <span class="badge bg-secondary me-2">${index + 1}</span>
+                        <img src="https://img.youtube.com/vi/${v.id}/default.jpg" style="width: 40px; margin-right: 10px;">
+                        <span>${v.title}</span>
+                    </div>
+                    <button onclick="deleteVideo(${index})" class="btn btn-sm btn-outline-danger"><i class="fas fa-trash"></i></button>
+                `;
+                list.appendChild(li);
+            });
+        }
+
+        function addNewVideo() {
+            const title = document.getElementById('newVideoTitle').value;
+            const url = document.getElementById('newVideoUrl').value;
+            const regExp = /^.*((youtu.be\/)|(v\/)|(\/u\/\w\/)|(embed\/)|(watch\?))\??v?=?([^#&?]*).*/;
+            const match = url.match(regExp);
+            const videoId = (match && match[7].length == 11) ? match[7] : false;
+
+            if(videoId && title) {
+                const vids = window.activeVideos || [];
+                vids.push({ id: videoId, title: title });
+                window.updatePlaylist(vids); // Sync to Cloud
+                alert("Video Added & Synced to all devices!");
+                document.getElementById('newVideoTitle').value = '';
+                document.getElementById('newVideoUrl').value = '';
+            } else {
+                alert("Invalid URL");
+            }
+        }
+
+        function deleteVideo(index) {
+            if(confirm("Delete this video for ALL users?")) {
+                const vids = window.activeVideos || [];
+                vids.splice(index, 1);
+                window.updatePlaylist(vids); // Sync to Cloud
+            }
+        }
+
+        function renderAdminUserTable() {
+            const tbody = document.getElementById('adminTableBody');
+            tbody.innerHTML = '';
+            
+            const dbData = window.allUsersData || {};
+            const vids = window.activeVideos || [];
+
+            users.filter(u => u.role === 'user').forEach(u => {
+                const uData = dbData[u.username] || {}; // Get data from Cloud
+                const completed = (uData.completedVideos || []).length;
+                let skips = 0;
+                if(uData.videoProgress) {
+                     Object.values(uData.videoProgress).forEach(vp => { if(vp.skips) skips += vp.skips.length; });
+                }
+
+                const totalVids = vids.length;
+                const progressPercent = totalVids > 0 ? Math.round((completed / totalVids) * 100) : 0;
+                let barColor = progressPercent === 100 ? 'bg-success' : 'bg-primary';
+
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>
+                        <div class="fw-bold">${u.username}</div>
+                        <small class="text-muted">Last: ${uData.lastLogin || 'Never'}</small>
+                    </td>
+                    <td><span class="badge ${progressPercent === 100 ? 'bg-success' : 'bg-secondary'}">${progressPercent === 100 ? 'Complete' : 'Active'}</span></td>
+                    <td style="width: 30%;">
+                        <div class="progress" style="height: 6px;">
+                            <div class="progress-bar ${barColor}" style="width: ${progressPercent}%"></div>
+                        </div>
+                        <small>${completed}/${totalVids}</small>
+                    </td>
+                    <td class="${skips > 0 ? 'text-danger fw-bold' : 'text-muted'}">${skips}</td>
+                    <td><button onclick="downloadUserData('${u.username}')" class="btn btn-sm btn-outline-primary"><i class="fas fa-download"></i></button></td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // --- USER LOGIC ---
+        let watchedSeconds = new Set();
+        let lastTime = 0;
+        let currentVideoId = '';
+
+        function initUserDashboard() {
+            document.getElementById('userSection').style.display = 'block';
+            document.getElementById('displayUsername').innerText = currentAppUser.username;
+            
+            const vids = window.activeVideos || [];
+            if(vids.length === 0) return;
+
+            // Determine Video
+            const dbData = window.allUsersData || {};
+            const myData = dbData[currentAppUser.username] || {};
+            const completed = myData.completedVideos || [];
+
+            currentVideoIndex = 0;
+            for(let i=0; i<vids.length; i++) {
+                if(!completed.includes(vids[i].id)) {
+                    currentVideoIndex = i;
+                    break;
+                }
+            }
+            loadPlaylistUI();
+            loadVideo(vids[currentVideoIndex].id);
+        }
+
+        function loadPlaylistUI() {
+            const list = document.getElementById('playlistGroup');
+            list.innerHTML = '';
+            const vids = window.activeVideos || [];
+            
+            const dbData = window.allUsersData || {};
+            const myData = dbData[currentAppUser ? currentAppUser.username : ''] || {};
+            const completedVids = myData.completedVideos || [];
+
+            vids.forEach((v, index) => {
+                const isCompleted = completedVids.includes(v.id);
+                const isActive = index === currentVideoIndex;
+                const isLocked = index > 0 && !completedVids.includes(vids[index-1].id) && !isCompleted && !isActive;
+
+                let div = document.createElement('div');
+                div.className = `playlist-item ${isActive ? 'active' : ''} ${isLocked ? 'locked' : ''}`;
+                div.innerHTML = `
+                    <img src="https://img.youtube.com/vi/${v.id}/mqdefault.jpg" class="playlist-thumbnail">
+                    <div class="playlist-info">
+                        <h6>${v.title}</h6>
+                        <small class="${isCompleted ? 'text-success' : ''}">${isCompleted ? 'Completed' : (isLocked ? 'Locked' : 'Pending')}</small>
+                    </div>
+                `;
+                if(!isLocked || isCompleted) {
+                    div.onclick = () => { if (!isLocked) loadVideo(v.id); }
+                }
+                list.appendChild(div);
+            });
+        }
+
+        // YouTube API
+        if (!window.YT) {
+            var tag = document.createElement('script');
+            tag.src = "https://www.youtube.com/iframe_api";
+            var firstScriptTag = document.getElementsByTagName('script')[0];
+            firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+        }
+
+        function onYouTubeIframeAPIReady() {
+            const vids = window.activeVideos || [];
+            if(vids.length > 0) {
+                player = new YT.Player('player', {
+                    height: '100%', width: '100%', videoId: vids[0].id,
+                    playerVars: { 'playsinline': 1, 'controls': 1 },
+                    events: { 'onStateChange': onPlayerStateChange }
+                });
+            }
+        }
+
+        function loadVideo(vidId) {
+            currentVideoId = vidId;
+            const vids = window.activeVideos || [];
+            currentVideoIndex = vids.findIndex(v => v.id === vidId);
+            
+            document.getElementById('currentVideoTitle').innerText = vids[currentVideoIndex].title;
+            watchedSeconds.clear();
+            lastTime = 0;
+            document.getElementById('skipAlert').classList.remove('d-flex');
+            document.getElementById('skipAlert').classList.add('d-none');
+            
+            // Resume Logic from Cloud
+            const dbData = window.allUsersData || {};
+            const myData = dbData[currentAppUser.username] || {};
+            let startSeconds = 0;
+            
+            if(myData.videoProgress && myData.videoProgress[vidId] && myData.videoProgress[vidId].lastPosition) {
+                if(!(myData.completedVideos || []).includes(vidId)) {
+                    startSeconds = myData.videoProgress[vidId].lastPosition;
+                    logActivity(`Resuming from Cloud: ${Math.floor(startSeconds)}s`);
+                }
+            }
+
+            if(player && player.loadVideoById) {
+                player.loadVideoById({videoId: vidId, startSeconds: startSeconds});
+            }
+            loadPlaylistUI();
+        }
+
+        function onPlayerStateChange(event) {
+            if (event.data == YT.PlayerState.PLAYING) startTracking();
+            else stopTracking();
+            if (event.data == YT.PlayerState.ENDED) validateCompletion();
+        }
+
+        function startTracking() {
+            stopTracking();
+            timerInterval = setInterval(() => {
+                if(!player || !player.getCurrentTime) return;
+                const currentTime = player.getCurrentTime();
+                const duration = player.getDuration();
+                
+                document.getElementById('totalDuration').innerText = Math.floor(duration);
+                document.getElementById('timeWatched').innerText = Math.floor(currentTime);
+
+                // Skip Logic
+                if (currentTime > lastTime + 2) {
+                    const skipMsg = `Skipped ${Math.floor(lastTime)}s to ${Math.floor(currentTime)}s`;
+                    logActivity(skipMsg);
+                    document.getElementById('skipAlert').classList.remove('d-none');
+                    document.getElementById('skipAlert').classList.add('d-flex');
+                    
+                    // Save Skip to Cloud
+                    const dbData = window.allUsersData || {};
+                    const myData = dbData[currentAppUser.username] || {};
+                    const prog = myData.videoProgress || {};
+                    const vidProg = prog[currentVideoId] || { skips: [] };
+                    vidProg.skips = vidProg.skips || [];
+                    vidProg.skips.push({ from: Math.floor(lastTime), to: Math.floor(currentTime) });
+                    
+                    // Sync
+                    window.saveUserProgress(currentAppUser.username, { 
+                        videoProgress: { ...prog, [currentVideoId]: vidProg } 
+                    });
+                }
+
+                watchedSeconds.add(Math.floor(currentTime));
+                
+                // Save Progress to Cloud every second
+                const dbData = window.allUsersData || {};
+                const myData = dbData[currentAppUser.username] || {};
+                const prog = myData.videoProgress || {};
+                const vidProg = prog[currentVideoId] || { skips: [] };
+                vidProg.lastPosition = currentTime;
+                vidProg.percentWatched = duration > 0 ? ((watchedSeconds.size / duration) * 100).toFixed(1) : 0;
+                
+                window.saveUserProgress(currentAppUser.username, { 
+                    videoProgress: { ...prog, [currentVideoId]: vidProg } 
+                });
+
+                document.getElementById('progressBar').style.width = `${(currentTime / duration) * 100}%`;
+                lastTime = currentTime;
+            }, 1000);
+        }
+
+        function stopTracking() { clearInterval(timerInterval); }
+
+        function validateCompletion() {
+            const duration = player.getDuration();
+            const uniqueWatched = watchedSeconds.size;
+            if (uniqueWatched >= duration * 0.90) {
+                const dbData = window.allUsersData || {};
+                const myData = dbData[currentAppUser.username] || {};
+                const completed = myData.completedVideos || [];
+                
+                if(!completed.includes(currentVideoId)) {
+                    completed.push(currentVideoId);
+                    window.saveUserProgress(currentAppUser.username, { completedVideos: completed });
+                    alert("Video Completed! Progress Synced to Cloud.");
+                }
+                
+                // Next Video
+                const vids = window.activeVideos || [];
+                if (currentVideoIndex + 1 < vids.length) loadVideo(vids[currentVideoIndex+1].id);
+            } else {
+                alert("You skipped too much content!");
+            }
+            loadPlaylistUI();
+        }
+
+        function logActivity(msg) {
+            const box = document.getElementById('activityLogBox');
+            const d = document.createElement('div');
+            d.className = 'log-entry';
+            d.innerHTML = `<span class="log-time">${new Date().toLocaleTimeString()}</span> <span>${msg}</span>`;
+            box.prepend(d);
+            
+            // Save log to cloud
+            const dbData = window.allUsersData || {};
+            const myData = dbData[currentAppUser.username] || {};
+            const logs = myData.logs || [];
+            logs.push(`[${new Date().toLocaleString()}] ${msg}`);
+            window.saveUserProgress(currentAppUser.username, { logs: logs });
+        }
+
+        // --- DOWNLOAD ---
+        function downloadAllData() {
+            let csv = "data:text/csv;charset=utf-8,Username,Video,Status,Percent,Skips\n";
+            const vids = window.activeVideos || [];
+            const dbData = window.allUsersData || {};
+            
+            users.filter(u => u.role === 'user').forEach(u => {
+                const uData = dbData[u.username] || {};
+                vids.forEach(v => {
+                    const isComp = (uData.completedVideos||[]).includes(v.id);
+                    const prog = (uData.videoProgress||{})[v.id] || {};
+                    csv += `${u.username},${v.title},${isComp?'Completed':'Pending'},${prog.percentWatched||0},${(prog.skips||[]).length}\n`;
+                });
+            });
+            const link = document.createElement("a");
+            link.setAttribute("href", encodeURI(csv));
+            link.setAttribute("download", "LMS_Report_Live.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+        
+        function downloadUserData(username) {
+            const uData = (window.allUsersData || {})[username] || {};
+            let csv = "data:text/csv;charset=utf-8,Activity Log\n";
+            (uData.logs || []).forEach(l => csv += `${l}\n`);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodeURI(csv));
+            link.setAttribute("download", `${username}_log.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+    </script>
+</body>
+</html>
