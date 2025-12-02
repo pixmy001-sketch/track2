@@ -176,7 +176,7 @@
     <!-- Firebase SDKs -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // 1. Firebase Config
@@ -223,7 +223,8 @@
         // 3. Real-time Listeners (The Magic Part)
         function setupRealtimeListeners() {
             // A. Listen to Playlist Changes (Admin Updates -> Everyone Sees)
-            const playlistRef = doc(db, 'artifacts', appId, 'public', 'data', 'lms_playlist');
+            // Fix: Added 'all_videos' document ID to make the path valid (6 segments)
+            const playlistRef = doc(db, 'artifacts', appId, 'public', 'data', 'lms_playlist', 'all_videos');
             
             onSnapshot(playlistRef, (docSnap) => {
                 if (docSnap.exists()) {
@@ -264,7 +265,8 @@
         };
         
         window.updatePlaylist = async (newVideoList) => {
-            const playlistRef = doc(db, 'artifacts', appId, 'public', 'data', 'lms_playlist');
+            // Fix: Added 'all_videos' document ID to make the path valid
+            const playlistRef = doc(db, 'artifacts', appId, 'public', 'data', 'lms_playlist', 'all_videos');
             await setDoc(playlistRef, { videos: newVideoList });
         };
 
@@ -326,15 +328,6 @@
 
         function renderAdminVideoList() {
             const list = document.getElementById('adminVideoList');
-            // Access module-level variable via window if attached, 
-            // but here we wait for the module to update window.activeVideos or we access activeVideos from the Closure if we merge.
-            // Since module scope is separate, we rely on the Module updating the UI directly or using a bridge.
-            // *FIX*: In this structure, the Module handles the data fetch. 
-            // We will trigger a re-render from the Module.
-            
-            // For simplicity in this file format, the Module script above calls this function directly.
-            // So we just need to access the data. Since we can't easily share variables from Module to Script,
-            // We'll read from window.activeVideos which we assigned in the module.
             
             const vids = window.activeVideos || [];
             document.getElementById('videoCountDisplay').innerText = `${vids.length} Videos`;
